@@ -3,16 +3,17 @@ package certs
 import (
 	"crypto/tls"
 	"crypto/x509/pkix"
-	"github.com/Venafi/vcert"
-	"github.com/Venafi/vcert/pkg/certificate"
-	t "log"
-	"net/http"
-	"time"
-	"io/ioutil"
-	"os"
-	"github.com/Venafi/vcert/pkg/endpoint"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
+	t "log"
+	"net/http"
+	"os"
+	"time"
+
+	"github.com/Venafi/vcert"
+	"github.com/Venafi/vcert/pkg/certificate"
+	"github.com/Venafi/vcert/pkg/endpoint"
 )
 
 type VenafiProvider struct {
@@ -53,31 +54,45 @@ func (p *VenafiProvider) Provision(host string, validFrom string, validFor time.
 		trustBundlePEM := string(trustBundle)
 
 		tppConfig = &vcert.Config{
-				ConnectorType: endpoint.ConnectorTypeTPP,
-				BaseUrl:       os.Getenv("VENAFI_API_URL"),
-				ConnectionTrust: trustBundlePEM,
-				Credentials: &endpoint.Authentication{
-					User:     os.Getenv("VENAFI_USER_NAME"),
-					Password: os.Getenv("VENAFI_PASSWORD")},
-				Zone: os.Getenv("VENAFI_CERT_ZONE"),
+			ConnectorType:   endpoint.ConnectorTypeTPP,
+			BaseUrl:         os.Getenv("VENAFI_API_URL"),
+			ConnectionTrust: trustBundlePEM,
+			Credentials: &endpoint.Authentication{
+				User:     os.Getenv("VENAFI_USER_NAME"),
+				Password: os.Getenv("VENAFI_PASSWORD")},
+			Zone: os.Getenv("VENAFI_CERT_ZONE"),
 		}
 
 	} else {
 		http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 
 		tppConfig = &vcert.Config{
-				ConnectorType: endpoint.ConnectorTypeTPP,
-				BaseUrl:       os.Getenv("VENAFI_API_URL"),
-				Credentials: &endpoint.Authentication{
-					User:     os.Getenv("VENAFI_USER_NAME"),
-					Password: os.Getenv("VENAFI_PASSWORD")},
-				Zone: os.Getenv("VENAFI_CERT_ZONE"),
+			ConnectorType: endpoint.ConnectorTypeTPP,
+			BaseUrl:       os.Getenv("VENAFI_API_URL"),
+			Credentials: &endpoint.Authentication{
+				User:     os.Getenv("VENAFI_USER_NAME"),
+				Password: os.Getenv("VENAFI_PASSWORD")},
+			Zone: os.Getenv("VENAFI_CERT_ZONE"),
 		}
 	}
 
 	c, err := vcert.NewClient(tppConfig)
 	if err != nil {
 		return KeyPair{}, NewCertError("could not connect to endpoint: " + err.Error())
+	}
+
+	// check to see if the certificate already exists in venafi
+	pickupID := "\\VED\\Policy\\" + os.Getenv("VENAFI_CERT_ZONE") + "\\" + host
+	retrieveRequest := &certificate.Request{
+		PickupID: pickupID,
+		Timeout:  180 * time.Second,
+	}
+
+	pcc, err := c.RetrieveCertificate(retrieveRequest)
+
+	// if certificate does exist, just return it
+	if err == nil {
+		return buildKeyPair(pcc)
 	}
 
 	enrollReq := &certificate.Request{
@@ -89,11 +104,11 @@ func (p *VenafiProvider) Provision(host string, validFrom string, validFor time.
 			Province:           []string{os.Getenv("VENAFI_PROVINCE")},
 			Country:            []string{os.Getenv("VENAFI_COUNTRY")},
 		},
-		DNSNames:       []string{host},
-		CsrOrigin:      certificate.LocalGeneratedCSR,
-		KeyType:        certificate.KeyTypeRSA,
-		KeyLength:      2048,
-		ChainOption:    certificate.ChainOptionRootLast,
+		DNSNames:    []string{host},
+		CsrOrigin:   certificate.LocalGeneratedCSR,
+		KeyType:     certificate.KeyTypeRSA,
+		KeyLength:   2048,
+		ChainOption: certificate.ChainOptionRootLast,
 	}
 
 	err = c.GenerateRequest(nil, enrollReq)
@@ -121,17 +136,36 @@ func (p *VenafiProvider) Provision(host string, validFrom string, validFor time.
 	t.Printf("Successfully picked up certificate for %s", host)
 	pp(pcc)
 
+	return buildKeyPair(pcc)
+	//var cert = []byte(pcc.Certificate)
+	//var privateKey = []byte(pcc.PrivateKey)
+
+	//return KeyPair{
+	//	cert,
+	//	privateKey,
+	//	notAfter}, nil
+}
+
+/*
+  Deprovision
+*/
+func (p *VenafiProvider) Deprovision(host string) error {
+	return nil
+}
+
+/*
+  buildKeyPair
+*/
+func buildKeyPair(pcc *PEMCollection) (keypair KeyPair, certError error) {
+
 	var cert = []byte(pcc.Certificate)
-    var privateKey = []byte(pcc.PrivateKey)
+	var privateKey = []byte(pcc.PrivateKey)
 
 	return KeyPair{
 		cert,
 		privateKey,
 		notAfter}, nil
-}
 
-func (p *VenafiProvider) Deprovision(host string) error {
-	return nil
 }
 
 var pp = func(a interface{}) {
@@ -140,4 +174,4 @@ var pp = func(a interface{}) {
 		fmt.Println("error:", err)
 	}
 	t.Println(string(b))
-} 
+}
