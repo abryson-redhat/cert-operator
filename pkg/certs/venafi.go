@@ -11,10 +11,14 @@ import (
 	"os"
 	"time"
 
+	logf "sigs.k8s.io/controller-runtime/pkg/runtime/log"
+
 	"github.com/Venafi/vcert"
 	"github.com/Venafi/vcert/pkg/certificate"
 	"github.com/Venafi/vcert/pkg/endpoint"
 )
+
+var log = logf.WithName("controller_service")
 
 type VenafiProvider struct {
 }
@@ -78,21 +82,9 @@ func (p *VenafiProvider) Provision(host string, validFrom string, validFor time.
 
 	c, err := vcert.NewClient(tppConfig)
 	if err != nil {
+		log.Info("Unable to create new client %s", err.Error())
+		t.Printf("Unable to create new client %s", err.Error())
 		return KeyPair{}, NewCertError("could not connect to endpoint: " + err.Error())
-	}
-
-	// check to see if the certificate already exists in venafi
-	pickupID := "\\VED\\Policy\\" + os.Getenv("VENAFI_CERT_ZONE") + "\\" + host
-	retrieveRequest := &certificate.Request{
-		PickupID: pickupID,
-		Timeout:  180 * time.Second,
-	}
-
-	pcc, err := c.RetrieveCertificate(retrieveRequest)
-
-	// if certificate does exist, just return it
-	if err == nil {
-		return buildKeyPair(pcc)
 	}
 
 	enrollReq := &certificate.Request{
@@ -111,61 +103,55 @@ func (p *VenafiProvider) Provision(host string, validFrom string, validFor time.
 		ChainOption: certificate.ChainOptionRootLast,
 	}
 
-	err = c.GenerateRequest(nil, enrollReq)
-	if err != nil {
-		return KeyPair{}, NewCertError("could not generate certificate request: " + err.Error())
-	}
-
-	requestID, err := c.RequestCertificate(enrollReq, "")
-	if err != nil {
-		return KeyPair{}, NewCertError("could not submit certificate request: " + err.Error())
-	}
-	t.Printf("Successfully submitted certificate request. Will pickup certificate by ID %s", requestID)
-
-	pickupReq := &certificate.Request{
-		PickupID: requestID,
+	certificateDN := "\\VED\\Policy\\" + os.Getenv("VENAFI_CERT_ZONE") + "\\" + host
+	log.Info("certificateDN is %s", "certificateDN", certificateDN)
+	//t.Printf("certificateDN is %s", certificateDN)
+	retrieveRequest := &certificate.Request{
+		PickupID: certificateDN,
 		Timeout:  180 * time.Second,
 	}
-	pcc, err := c.RetrieveCertificate(pickupReq)
-	if err != nil {
-		return KeyPair{}, NewCertError("could not retrieve certificate using requestId " + err.Error())
-	}
 
+	pcc, err := c.RetrieveCertificate(retrieveRequest)
+	if err != nil {
+		t.Printf("Unable to retrieve certificate = %s", err.Error())
+
+		err = c.GenerateRequest(nil, enrollReq)
+		if err != nil {
+			return KeyPair{}, NewCertError("could not generate certificate request: " + err.Error())
+		}
+
+		requestID, err := c.RequestCertificate(enrollReq, "")
+		if err != nil {
+			return KeyPair{}, NewCertError("could not submit certificate request: " + err.Error())
+		}
+		t.Printf("Successfully submitted certificate request. Will pickup certificate by ID %s", requestID)
+		pickupReq := &certificate.Request{
+			PickupID: requestID,
+			Timeout:  180 * time.Second,
+		}
+		pcc, err = c.RetrieveCertificate(pickupReq)
+		if err != nil {
+			return KeyPair{}, NewCertError("could not retrieve certificate using requestId " + err.Error())
+		}
+	}
+	t.Printf("enroll private key = %s", enrollReq.PrivateKey)
 	pcc.AddPrivateKey(enrollReq.PrivateKey, []byte(enrollReq.KeyPassword))
 
 	t.Printf("Successfully picked up certificate for %s", host)
 	pp(pcc)
 
-	return buildKeyPair(pcc)
-	//var cert = []byte(pcc.Certificate)
-	//var privateKey = []byte(pcc.PrivateKey)
-
-	//return KeyPair{
-	//	cert,
-	//	privateKey,
-	//	notAfter}, nil
-}
-
-/*
-  Deprovision
-*/
-func (p *VenafiProvider) Deprovision(host string) error {
-	return nil
-}
-
-/*
-  buildKeyPair
-*/
-func buildKeyPair(pcc *PEMCollection) (keypair KeyPair, certError error) {
-
 	var cert = []byte(pcc.Certificate)
 	var privateKey = []byte(pcc.PrivateKey)
+	t.Printf("pcc private key = %s", pcc.PrivateKey)
 
 	return KeyPair{
 		cert,
 		privateKey,
 		notAfter}, nil
+}
 
+func (p *VenafiProvider) Deprovision(host string) error {
+	return nil
 }
 
 var pp = func(a interface{}) {
