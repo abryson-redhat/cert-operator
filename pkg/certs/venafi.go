@@ -18,7 +18,7 @@ import (
 	"github.com/Venafi/vcert/pkg/endpoint"
 )
 
-var log = logf.WithName("controller_service")
+var logger = logf.Log.WithName("controller_service")
 
 type VenafiProvider struct {
 }
@@ -82,7 +82,7 @@ func (p *VenafiProvider) Provision(host string, validFrom string, validFor time.
 
 	c, err := vcert.NewClient(tppConfig)
 	if err != nil {
-		log.Info("Unable to create new client %s", err.Error())
+		logger.Info("Unable to create new client %s", err.Error())
 		t.Printf("Unable to create new client %s", err.Error())
 		return KeyPair{}, NewCertError("could not connect to endpoint: " + err.Error())
 	}
@@ -104,7 +104,7 @@ func (p *VenafiProvider) Provision(host string, validFrom string, validFor time.
 	}
 
 	certificateDN := "\\VED\\Policy\\" + os.Getenv("VENAFI_CERT_ZONE") + "\\" + host
-	log.Info("certificateDN is %s", "certificateDN", certificateDN)
+	logger.Info("certificateDN is %s", "certificateDN", certificateDN)
 	//t.Printf("certificateDN is %s", certificateDN)
 	retrieveRequest := &certificate.Request{
 		PickupID: certificateDN,
